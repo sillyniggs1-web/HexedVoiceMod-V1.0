@@ -1,0 +1,41 @@
+name: build-hexedvoicemod
+on: [push, workflow_dispatch]
+jobs:
+  test:                       # static checks + engine tests on the runner (RubberBand stand-in), ~1 min
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Static checks (prohibited legacy terms)
+        run: bash tools/check_terms.sh
+      - name: Host tests (RubberBand stand-in)
+        run: |
+          g++ -std=c++17 -O2 -ffast-math -fno-finite-math-only -I test/fake test/host_test.cpp -o host_test_rb
+          ./host_test_rb
+      - name: Host tests (Lite-only, VFX_NO_RUBBERBAND)
+        run: |
+          g++ -std=c++17 -O2 -ffast-math -fno-finite-math-only -I test/fake -DVFX_NO_RUBBERBAND test/host_test.cpp -o host_test_lite
+          ./host_test_lite
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch RubberBand 4.0.0 (GPL-2.0+, not stored in this repo)
+        run: |
+          mkdir -p jni/rubberband-src
+          curl -fL https://codeload.github.com/breakfastquay/rubberband/tar.gz/refs/tags/v4.0.0 | tar xz --strip-components=1 -C jni/rubberband-src
+          ls jni/rubberband-src/single/RubberBandSingle.cpp jni/rubberband-src/rubberband/RubberBandLiveShifter.h
+      - name: Fetch RNNoise (BSD-3-Clause, not stored in this repo)
+        run: |
+          mkdir -p jni/rnnoise-src
+          curl -fL https://codeload.github.com/xiph/rnnoise/tar.gz/refs/tags/v0.2 | tar xz --strip-components=1 -C jni/rnnoise-src
+          ls jni/rnnoise-src/include/rnnoise.h jni/rnnoise-src/src/denoise.c
+      - name: ndk-build (armeabi-v7a)
+        run: |
+          $ANDROID_NDK_HOME/ndk-build NDK_PROJECT_PATH=. APP_BUILD_SCRIPT=jni/Android.mk NDK_APPLICATION_MK=jni/Application.mk -j2
+          file libs/armeabi-v7a/libHexedVoiceMod.so
+          readelf -d libs/armeabi-v7a/libHexedVoiceMod.so | grep NEEDED
+          nm -D --defined-only libs/armeabi-v7a/libHexedVoiceMod.so | grep -E '__GetModInfo|OnModLoad|OnModPreLoad|vc_api|vfx_'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HexedVoiceMod
+          path: libs/armeabi-v7a/libHexedVoiceMod.so
